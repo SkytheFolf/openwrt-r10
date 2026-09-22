@@ -1,0 +1,289 @@
+From: Skylar Folf <informationconflicts@protonmail.com>
+Subject: [PATCH] net: phy: qca808x: add QCA8084 LED support
+
+The QCA8084 PHY LED block uses the same MMD7 LED control registers as
+the QCA8081, but the LED signals only reach the package pins through
+the chip's internal TLMM, and the package reset performed at probe
+leaves every LED pin in its power-on GPIO-input state. As a result the
+LED pattern/force/polarity registers have no visible effect and the
+board LEDs sit at whatever level the pin's default pull gives them.
+
+Mux the pins of the LEDs declared in devicetree to their per-port LED
+pin function (driver LED index 0 on TLMM pins 2-5 function 1, index 1
+on pins 6-9 function 3/2/2/3, index 2 on pins 16-19 function 1 - note
+the vendor SSDK numbers the last two blocks in the opposite order) and
+wire up LED ops on the QCA8084 driver entry.
+
+The PHY's LED polarity control is global, but boards such as the
+Route10 mix wiring polarities across the three LEDs of one port. Run
+the global polarity active-high: LEDs without active-low in DT match
+the hardware and keep pattern-engine offload, while LEDs declared
+active-low are emulated by inverting the force value in software and
+rejecting hw offload so the netdev trigger falls back to software
+mode. All declared LEDs are parked dark at config_init since the
+power-on pattern defaults would otherwise light some of them at idle.
+
+For offloaded LEDs with link conditions, clear BLINK_CHECK_BYPASS
+(which qca808x_led_parse_netdev sets unconditionally): without the
+bypass the hardware gates the traffic blink on the speed map matching
+the live link, so a per-speed LED is solid at its own speed, blinks
+there on traffic and stays dark and quiet at every other speed.
+
+Inverted LEDs implement "on" as pattern mode with only the traffic
+blink bits and BLINK_CHECK_BYPASS set: the pattern output idles (LED
+lit) and traffic toggles it, so the LED briefly drops out on activity
+while the software trigger provides the link/speed gating.
+
+--- a/drivers/net/phy/qcom/qca808x.c
++++ b/drivers/net/phy/qcom/qca808x.c
+@@ -117,6 +117,28 @@
+ #define QCA8084_MMD7_IPG_OP			0x901d
+ #define QCA8084_IPG_10_TO_11_EN			BIT(0)
+ 
++/* QCA8084 internal TLMM block, accessed with the same paged MDIO sequences
++ * as the secure control module below. Each pin has one config register and
++ * FUNC_SEL muxes the pin between GPIO (0, the power-on default) and the pin
++ * functions.
++ *
++ * The pin of each per-port LED follows the LED's control registers, which
++ * this driver indexes downwards from 0x8078 (LED0=0x8078, LED1=0x8076,
++ * LED2=0x8074). Beware that the vendor SSDK numbers the same blocks
++ * differently (its source1 is 0x8074, source2 is 0x8076): in SSDK terms
++ * index 1 below is source 2 and index 2 is source 1. Index 0 sits on pins
++ * 2-5 (function 1), index 1 on pins 6-9 (function 3,2,2,3 for ports 0-3),
++ * index 2 on pins 16-19 (function 1).
++ */
++#define QCA8084_TLMM_GPIO_CFG(pin)		(0xc400000 + (pin) * 0x1000)
++#define QCA8084_TLMM_GPIO_FUNC_SEL		GENMASK(5, 2)
++#define QCA8084_TLMM_LED_FUNC			1
++#define QCA8084_TLMM_LED0_PIN(port)		(2 + (port))
++#define QCA8084_TLMM_LED1_PIN(port)		(6 + (port))
++#define QCA8084_TLMM_LED1_FUNC(port)		\
++	((port) == 0 || (port) == 3 ? 3 : 2)
++#define QCA8084_TLMM_LED2_PIN(port)		(16 + (port))
++
+ /* QCA8084 includes secure control module, which supports customizing the
+  * MDIO address of PHY device and PCS device and configuring package mode
+  * for the interface mode of PCS. The register of secure control is accessed
+@@ -174,6 +196,7 @@ enum {
+ struct qca808x_priv {
+ 	int led_polarity_mode;
+ 	int channel_id;
++	u16 led_active_low_map;
+ 	struct qcom_phy_hw_stats hw_stats;
+ };
+ 
+@@ -961,8 +984,172 @@ static int qca8084_phy_package_config_in
+ 	return qca8084_package_clock_init(shared_priv);
+ }
+ 
++/* The package reset at probe returns the internal TLMM to its power-on
++ * state where every LED pin is a GPIO input, which cuts the PHY LED block
++ * off from the package pins. Mux the pins of the LEDs declared in DT to
++ * their per-port LED function.
++ */
++static int qca8084_led_pins_init(struct phy_device *phydev)
++{
++	struct qca808x_priv *priv = phydev->priv;
++	struct phy_led *phyled;
++	u32 pin, func;
++	int ret;
++
++	list_for_each_entry(phyled, &phydev->leds, list) {
++		switch (phyled->index) {
++		case 0:
++			pin = QCA8084_TLMM_LED0_PIN(priv->channel_id);
++			func = QCA8084_TLMM_LED_FUNC;
++			break;
++		case 1:
++			pin = QCA8084_TLMM_LED1_PIN(priv->channel_id);
++			func = QCA8084_TLMM_LED1_FUNC(priv->channel_id);
++			break;
++		case 2:
++			pin = QCA8084_TLMM_LED2_PIN(priv->channel_id);
++			func = QCA8084_TLMM_LED_FUNC;
++			break;
++		default:
++			return -EINVAL;
++		}
++
++		ret = qca8084_mii_modify(phydev, QCA8084_TLMM_GPIO_CFG(pin),
++					 QCA8084_TLMM_GPIO_FUNC_SEL,
++					 FIELD_PREP(QCA8084_TLMM_GPIO_FUNC_SEL,
++						    func));
++		if (ret)
++			return ret;
++	}
++
++	return 0;
++}
++
++/* The QCA8084 LED polarity control is global per PHY, but boards mix LED
++ * wiring polarities (e.g. Route10: the white LED lights when its pin is
++ * low, the blue and amber LEDs light when their pin is high). Run the
++ * global polarity active-high: LEDs without active-low in DT match it
++ * and keep pattern-engine hw offload (including the speed-gated traffic
++ * blink); LEDs declared active-low are emulated by inverting the force
++ * value in software, which costs them hw offload (the netdev trigger
++ * falls back to software mode - give such LEDs link rules only, the
++ * software activity blink fires regardless of the link speed).
++ */
++static bool qca8084_led_inverted(struct phy_device *phydev, u8 index)
++{
++	struct qca808x_priv *priv = phydev->priv;
++
++	return priv->led_active_low_map & BIT(index);
++}
++
++static int qca8084_led_polarity_set(struct phy_device *phydev, int index,
++				    unsigned long modes)
++{
++	struct qca808x_priv *priv = phydev->priv;
++	u32 mode;
++
++	for_each_set_bit(mode, &modes, __PHY_LED_MODES_NUM) {
++		switch (mode) {
++		case PHY_LED_ACTIVE_LOW:
++			priv->led_active_low_map |= BIT(index);
++			break;
++		case PHY_LED_ACTIVE_HIGH:
++			/* Matches the global polarity, nothing to emulate. */
++			priv->led_active_low_map &= ~BIT(index);
++			break;
++		default:
++			return -EINVAL;
++		}
++	}
++
++	return 0;
++}
++
++static int qca8084_led_brightness_set(struct phy_device *phydev,
++				      u8 index, enum led_brightness value)
++{
++	int ret;
++
++	if (!qca8084_led_inverted(phydev, index))
++		return qca808x_led_brightness_set(phydev, index, value);
++
++	/* An inverted LED is lit while the pattern-engine output is idle.
++	 * For "off", force the output active. For "on", release the LED
++	 * into pattern mode with only the traffic-blink bits set: the
++	 * output idles (LED solid) and traffic toggles it, briefly
++	 * dropping the LED out on activity. The trigger that decides when
++	 * to set the brightness provides the link/speed gating.
++	 */
++	if (!value)
++		return phy_modify_mmd(phydev, MDIO_MMD_AN,
++				      QCA808X_MMD7_LED_FORCE_CTRL(index),
++				      QCA808X_LED_FORCE_EN |
++				      QCA808X_LED_FORCE_MODE_MASK,
++				      QCA808X_LED_FORCE_EN |
++				      QCA808X_LED_FORCE_ON);
++
++	ret = phy_write_mmd(phydev, MDIO_MMD_AN,
++			    QCA808X_MMD7_LED_CTRL(index),
++			    QCA808X_LED_TX_BLINK | QCA808X_LED_RX_BLINK |
++			    QCA808X_LED_BLINK_CHECK_BYPASS);
++	if (ret)
++		return ret;
++
++	return phy_clear_bits_mmd(phydev, MDIO_MMD_AN,
++				  QCA808X_MMD7_LED_FORCE_CTRL(index),
++				  QCA808X_LED_FORCE_EN);
++}
++
++static int qca8084_led_hw_is_supported(struct phy_device *phydev, u8 index,
++				       unsigned long rules)
++{
++	if (qca8084_led_inverted(phydev, index))
++		return -EOPNOTSUPP;
++
++	return qca808x_led_hw_is_supported(phydev, index, rules);
++}
++
++static int qca8084_led_hw_control_set(struct phy_device *phydev, u8 index,
++				      unsigned long rules)
++{
++	int ret;
++
++	if (qca8084_led_inverted(phydev, index))
++		return -EOPNOTSUPP;
++
++	ret = qca808x_led_hw_control_set(phydev, index, rules);
++	if (ret)
++		return ret;
++
++	/* Without BLINK_CHECK_BYPASS the traffic blink only runs while the
++	 * speed map matches the link, which keeps per-speed LEDs solid at
++	 * their own speed and dark and quiet at every other speed. Keep
++	 * the bypass only for rules with no link condition at all.
++	 */
++	if (!(rules & (BIT(TRIGGER_NETDEV_LINK) |
++		       BIT(TRIGGER_NETDEV_LINK_10) |
++		       BIT(TRIGGER_NETDEV_LINK_100) |
++		       BIT(TRIGGER_NETDEV_LINK_1000) |
++		       BIT(TRIGGER_NETDEV_LINK_2500))))
++		return 0;
++
++	return phy_clear_bits_mmd(phydev, MDIO_MMD_AN,
++				  QCA808X_MMD7_LED_CTRL(index),
++				  QCA808X_LED_BLINK_CHECK_BYPASS);
++}
++
++static int qca8084_led_hw_control_get(struct phy_device *phydev, u8 index,
++				      unsigned long *rules)
++{
++	if (qca8084_led_inverted(phydev, index))
++		return -EOPNOTSUPP;
++
++	return qca808x_led_hw_control_get(phydev, index, rules);
++}
++
+ static int qca8084_config_init(struct phy_device *phydev)
+ {
++	struct phy_led *phyled;
+ 	int ret;
+ 
+ 	if (phy_package_init_once(phydev)) {
+@@ -971,6 +1158,27 @@ static int qca8084_config_init(struct ph
+ 			return ret;
+ 	}
+ 
++	ret = qca8084_led_pins_init(phydev);
++	if (ret)
++		return ret;
++
++	ret = phy_set_bits_mmd(phydev, MDIO_MMD_AN,
++			       QCA808X_MMD7_LED_POLARITY_CTRL,
++			       QCA808X_LED_ACTIVE_HIGH);
++	if (ret)
++		return ret;
++
++	/* Park every declared LED dark (the hardware default patterns
++	 * light the inverted LEDs at idle); LED triggers take over from
++	 * here.
++	 */
++	list_for_each_entry(phyled, &phydev->leds, list) {
++		ret = qca8084_led_brightness_set(phydev, phyled->index,
++						 LED_OFF);
++		if (ret)
++			return ret;
++	}
++
+ 	if (phydev->interface == PHY_INTERFACE_MODE_10G_QXGMII)
+ 		__set_bit(PHY_INTERFACE_MODE_10G_QXGMII,
+ 			  phydev->possible_interfaces);
+@@ -1266,6 +1474,12 @@ static struct phy_driver qca808x_driver[
+ 	.link_change_notify	= qca8084_link_change_notify,
+ 	.probe			= qca8084_probe,
+ 	.remove			= qca8084_remove,
++	.led_brightness_set	= qca8084_led_brightness_set,
++	.led_blink_set		= qca808x_led_blink_set,
++	.led_hw_is_supported	= qca8084_led_hw_is_supported,
++	.led_hw_control_set	= qca8084_led_hw_control_set,
++	.led_hw_control_get	= qca8084_led_hw_control_get,
++	.led_polarity_set	= qca8084_led_polarity_set,
+ }, };
+ 
+ module_phy_driver(qca808x_driver);
