@@ -349,12 +349,49 @@
 		/* Remap PHY0-3 to MDIO 1-4, PCS0→5, SRDS1→6, XPCS→7 */
 		qcom,phy-addr-fixup = <1 2 3 4 5 6 7>;
 
+		/*
+		 * Each RJ45 port has three LEDs driven by the QCA8084 LED
+		 * block (the driver muxes the internal TLMM pin of every LED
+		 * declared here, pin level verified on hardware): led@0 =
+		 * white right LED, lights LOW; led@1 = blue left LED, lights
+		 * HIGH; led@2 = amber left LED, lights HIGH. Stock semantics
+		 * (01_leds): white = 2.5G link/activity, amber = 10/100M,
+		 * blue = 1G. The PHY's LED polarity control is global and the
+		 * chip has no per-LED hardware polarity (probed exhaustively),
+		 * so the driver runs global active-low: led@0 (active-low)
+		 * matches and keeps hw offload; led@1/led@2 (no active-low =
+		 * active-high wiring) are software-inverted by the driver.
+		 */
 		phy0: ethernet-phy@1 {
 			compatible = "ethernet-phy-id004d.d180";
 			reg = <1>;
 			clocks = <&qca8k_nsscc NSS_CC_GEPHY0_SYS_CLK>;
 			resets = <&qca8k_nsscc NSS_CC_GEPHY0_SYS_ARES>;
 			qcom,xpcs-channel = <0>;
+
+			leds {
+				#address-cells = <1>;
+				#size-cells = <0>;
+
+				led@0 {
+					reg = <0>;
+					color = <LED_COLOR_ID_WHITE>;
+					function = LED_FUNCTION_LAN;
+					active-low;
+				};
+
+				led@1 {
+					reg = <1>;
+					color = <LED_COLOR_ID_BLUE>;
+					function = LED_FUNCTION_LAN;
+				};
+
+				led@2 {
+					reg = <2>;
+					color = <LED_COLOR_ID_AMBER>;
+					function = LED_FUNCTION_LAN;
+				};
+			};
 		};
 
 		phy1: ethernet-phy@2 {
@@ -363,6 +400,30 @@
 			clocks = <&qca8k_nsscc NSS_CC_GEPHY1_SYS_CLK>;
 			resets = <&qca8k_nsscc NSS_CC_GEPHY1_SYS_ARES>;
 			qcom,xpcs-channel = <1>;
+
+			leds {
+				#address-cells = <1>;
+				#size-cells = <0>;
+
+				led@0 {
+					reg = <0>;
+					color = <LED_COLOR_ID_WHITE>;
+					function = LED_FUNCTION_LAN;
+					active-low;
+				};
+
+				led@1 {
+					reg = <1>;
+					color = <LED_COLOR_ID_BLUE>;
+					function = LED_FUNCTION_LAN;
+				};
+
+				led@2 {
+					reg = <2>;
+					color = <LED_COLOR_ID_AMBER>;
+					function = LED_FUNCTION_LAN;
+				};
+			};
 		};
 
 		phy2: ethernet-phy@3 {
@@ -371,6 +432,30 @@
 			clocks = <&qca8k_nsscc NSS_CC_GEPHY2_SYS_CLK>;
 			resets = <&qca8k_nsscc NSS_CC_GEPHY2_SYS_ARES>;
 			qcom,xpcs-channel = <2>;
+
+			leds {
+				#address-cells = <1>;
+				#size-cells = <0>;
+
+				led@0 {
+					reg = <0>;
+					color = <LED_COLOR_ID_WHITE>;
+					function = LED_FUNCTION_LAN;
+					active-low;
+				};
+
+				led@1 {
+					reg = <1>;
+					color = <LED_COLOR_ID_BLUE>;
+					function = LED_FUNCTION_LAN;
+				};
+
+				led@2 {
+					reg = <2>;
+					color = <LED_COLOR_ID_AMBER>;
+					function = LED_FUNCTION_LAN;
+				};
+			};
 		};
 
 		phy3: ethernet-phy@4 {
@@ -379,6 +464,30 @@
 			clocks = <&qca8k_nsscc NSS_CC_GEPHY3_SYS_CLK>;
 			resets = <&qca8k_nsscc NSS_CC_GEPHY3_SYS_ARES>;
 			qcom,xpcs-channel = <3>;
+
+			leds {
+				#address-cells = <1>;
+				#size-cells = <0>;
+
+				led@0 {
+					reg = <0>;
+					color = <LED_COLOR_ID_WHITE>;
+					function = LED_FUNCTION_WAN;
+					active-low;
+				};
+
+				led@1 {
+					reg = <1>;
+					color = <LED_COLOR_ID_BLUE>;
+					function = LED_FUNCTION_WAN;
+				};
+
+				led@2 {
+					reg = <2>;
+					color = <LED_COLOR_ID_AMBER>;
+					function = LED_FUNCTION_WAN;
+				};
+			};
 		};
 
 		/* SRDS1 / PCS1 (PCS component at MDIO 6) */

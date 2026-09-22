@@ -17,6 +17,21 @@ alta,route10)
 	ucidef_set_led_netdev "led1g_wan2" "WAN2 sub-10G" "blue:wan-2" "wan2" "link_10 link_100 link_1000 link_2500 link_5000"
 	ucidef_set_led_netdev "led10g_lan4" "LAN4 10G" "white:lan-4" "lan4" "link_10000"
 	ucidef_set_led_netdev "led1g_lan4" "LAN4 sub-10G" "blue:lan-4" "lan4" "link_10 link_100 link_1000 link_2500 link_5000"
+
+	# RJ45 ports, stock firmware semantics: right LED white = 2.5G
+	# link/activity, left LED amber = 10/100M link, blue = 1G link.
+	ucidef_set_led_netdev "lan1_white" "LAN1 2.5G" "90000.mdio-1:03:white:lan" "lan1" "link_2500"
+	ucidef_set_led_netdev "lan1_blue" "LAN1 1G" "90000.mdio-1:03:blue:lan" "lan1" "link_1000 tx rx"
+	ucidef_set_led_netdev "lan1_amber" "LAN1 10/100M" "90000.mdio-1:03:amber:lan" "lan1" "link_10 link_100 tx rx"
+	ucidef_set_led_netdev "lan2_white" "LAN2 2.5G" "90000.mdio-1:02:white:lan" "lan2" "link_2500"
+	ucidef_set_led_netdev "lan2_blue" "LAN2 1G" "90000.mdio-1:02:blue:lan" "lan2" "link_1000 tx rx"
+	ucidef_set_led_netdev "lan2_amber" "LAN2 10/100M" "90000.mdio-1:02:amber:lan" "lan2" "link_10 link_100 tx rx"
+	ucidef_set_led_netdev "lan3_white" "LAN3 2.5G" "90000.mdio-1:01:white:lan" "lan3" "link_2500"
+	ucidef_set_led_netdev "lan3_blue" "LAN3 1G" "90000.mdio-1:01:blue:lan" "lan3" "link_1000 tx rx"
+	ucidef_set_led_netdev "lan3_amber" "LAN3 10/100M" "90000.mdio-1:01:amber:lan" "lan3" "link_10 link_100 tx rx"
+	ucidef_set_led_netdev "wan1_white" "WAN1 2.5G" "90000.mdio-1:04:white:wan" "wan1" "link_2500"
+	ucidef_set_led_netdev "wan1_blue" "WAN1 1G" "90000.mdio-1:04:blue:wan" "wan1" "link_1000 tx rx"
+	ucidef_set_led_netdev "wan1_amber" "WAN1 10/100M" "90000.mdio-1:04:amber:wan" "wan1" "link_10 link_100 tx rx"
 	;;
 esac
 
