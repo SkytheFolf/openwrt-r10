@@ -14,6 +14,15 @@ define Device/8devices_kiwi-dvk
 endef
 TARGET_DEVICES += 8devices_kiwi-dvk
 
+define Device/alta_route10
+	$(call Device/FitImage)
+	DEVICE_VENDOR := Alta Labs
+	DEVICE_MODEL := Route10
+	SOC := ipq9574
+	DEVICE_PACKAGES := kmod-sfp
+endef
+TARGET_DEVICES += alta_route10
+
 define Device/askey_sbe1v1k
 	$(call Device/FitImage)
 	$(call Device/EmmcImage)

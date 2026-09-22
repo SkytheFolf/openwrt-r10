@@ -20,6 +20,9 @@ ipq95xx_setup_interfaces()
 	qcom,ipq9574-ap-al02-c7)
 		ucidef_set_interfaces_lan_wan "lan1 lan2 lan3 lan4 lan5" "wan"
 		;;
+	alta,route10)
+		ucidef_set_interfaces_lan_wan "lan1 lan2 lan3 lan4" "wan1 wan2"
+		;;
 	*)
 		echo "Unsupported hardware. Network interfaces not initialized"
 		;;
